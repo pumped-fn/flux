@@ -82,7 +82,7 @@ func (h *SelectHandle[S]) Subscribe(listener func()) UnsubscribeFunc {
 					continue
 				}
 				func() {
-					defer func() { recover() }()
+					defer func() { _ = recover() }()
 					fn()
 				}()
 			}

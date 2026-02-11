@@ -335,7 +335,7 @@ func TestExampleOrderProcessing(t *testing.T) {
 		WithExtensions(&ObservabilityExtension{telemetry: telemetry}),
 		WithScopeTags(requestIDTag.Value("default-request")),
 	)
-	defer scope.Dispose()
+	defer func() { _ = scope.Dispose() }()
 
 	if err := scope.Ready(); err != nil {
 		t.Fatal(err)
@@ -430,7 +430,7 @@ func TestExampleOrderProcessing(t *testing.T) {
 		t.Errorf("unexpected order2 status: %s", order2.Status)
 	}
 
-	scope.Dispose()
+	_ = scope.Dispose()
 
 	records = telemetry.Records()
 	hasDispose := false

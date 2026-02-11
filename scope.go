@@ -223,7 +223,7 @@ func (si *scopeImpl) emitState(state AtomState, atom AnyAtom) {
 				continue
 			}
 			func() {
-				defer func() { recover() }()
+				defer func() { _ = recover() }()
 				fn()
 			}()
 		}
@@ -278,7 +278,7 @@ func (si *scopeImpl) notifyListeners(atom AnyAtom, event ControllerEvent) {
 				continue
 			}
 			func() {
-				defer func() { recover() }()
+				defer func() { _ = recover() }()
 				fn()
 			}()
 		}
@@ -287,7 +287,7 @@ func (si *scopeImpl) notifyListeners(atom AnyAtom, event ControllerEvent) {
 				continue
 			}
 			func() {
-				defer func() { recover() }()
+				defer func() { _ = recover() }()
 				fn()
 			}()
 		}
@@ -312,7 +312,7 @@ func (si *scopeImpl) notifyAllOnly(atom AnyAtom) {
 				continue
 			}
 			func() {
-				defer func() { recover() }()
+				defer func() { _ = recover() }()
 				fn()
 			}()
 		}
@@ -444,8 +444,8 @@ func (si *scopeImpl) doInvalidateSequential(atom AnyAtom) {
 	slices.Reverse(cleanups)
 	for _, fn := range cleanups {
 		func() {
-			defer func() { recover() }()
-			fn()
+			defer func() { _ = recover() }()
+			_ = fn()
 		}()
 	}
 
@@ -589,7 +589,7 @@ func (si *scopeImpl) doInvalidateSequential(atom AnyAtom) {
 
 	si.emitState(StateResolving, atom)
 	si.notifyListeners(atom, EventResolving)
-	si.resolveUncached(atom, nil)
+	_, _ = si.resolveUncached(atom, nil)
 	si.cascadeDependents(atom)
 	si.maybeScheduleGC(atom)
 	si.recheckPending(atom)

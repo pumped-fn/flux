@@ -13,7 +13,7 @@ import (
 func newTestScope(t *testing.T, opts ...ScopeOption) Scope {
 	t.Helper()
 	s := NewScope(context.Background(), opts...)
-	t.Cleanup(func() { s.Dispose() })
+	t.Cleanup(func() { _ = s.Dispose() })
 	if err := s.Ready(); err != nil {
 		t.Fatal(err)
 	}
@@ -181,10 +181,10 @@ func TestSingleflightRespectsContextCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := NewScope(ctx)
-	s.Ready()
-	t.Cleanup(func() { s.Dispose() })
+	_ = s.Ready()
+	t.Cleanup(func() { _ = s.Dispose() })
 
-	go Resolve(s, atom)
+	go func() { _, _ = Resolve(s, atom) }()
 	<-started
 
 	cancel()
@@ -321,7 +321,7 @@ func TestControllerEvents(t *testing.T) {
 		})
 		defer unsub()
 
-		ctrl.Resolve()
+		_, _ = ctrl.Resolve()
 
 		if notified.Load() < 1 {
 			t.Fatal("expected at least one notification")
@@ -340,7 +340,7 @@ func TestControllerEvents(t *testing.T) {
 		})
 		defer unsub()
 
-		ctrl.Resolve()
+		_, _ = ctrl.Resolve()
 
 		if notified.Load() < 1 {
 			t.Fatal("expected resolving notification")
@@ -359,7 +359,7 @@ func TestControllerEvents(t *testing.T) {
 		})
 		defer unsub()
 
-		ctrl.Resolve()
+		_, _ = ctrl.Resolve()
 
 		if notified.Load() < 1 {
 			t.Fatal("expected wildcard notification")
@@ -384,7 +384,7 @@ func TestControllerGetOnFailedAtom(t *testing.T) {
 		return 0, errors.New("factory error")
 	})
 	s := newTestScope(t)
-	Resolve(s, atom)
+	_, _ = Resolve(s, atom)
 	ctrl := GetController(s, atom)
 	_, err := ctrl.Get()
 	if err == nil || err.Error() != "factory error" {
@@ -402,7 +402,7 @@ func TestListenerUnsubscribe(t *testing.T) {
 	unsub := ctrl.On(EventResolved, func() {
 		count.Add(1)
 	})
-	ctrl.Resolve()
+	_, _ = ctrl.Resolve()
 	unsub()
 
 	ctrl.Invalidate()
@@ -424,7 +424,7 @@ func TestListenerPanicDoesNotCrash(t *testing.T) {
 	ctrl.On(EventResolved, func() { panic("listener panic") })
 	ctrl.On(EventResolved, func() { secondCalled.Store(true) })
 
-	ctrl.Resolve()
+	_, _ = ctrl.Resolve()
 
 	if !secondCalled.Load() {
 		t.Fatal("second listener should still be called after first panics")
@@ -491,7 +491,7 @@ func TestSelect(t *testing.T) {
 			return map[string]int{"x": 10, "y": 20}, nil
 		})
 		s := newTestScope(t)
-		Resolve(s, atom)
+		_, _ = Resolve(s, atom)
 
 		handle := Select(s, atom, func(m map[string]int) int { return m["x"] })
 		if handle.Get() != 10 {
@@ -503,7 +503,7 @@ func TestSelect(t *testing.T) {
 			return 1, nil
 		})
 		s := newTestScope(t)
-		Resolve(s, atom)
+		_, _ = Resolve(s, atom)
 
 		handle := Select(s, atom, func(v int) int { return v * 10 })
 
@@ -514,7 +514,7 @@ func TestSelect(t *testing.T) {
 		defer unsub()
 
 		ctrl := GetController(s, atom)
-		ctrl.Set(2)
+		_ = ctrl.Set(2)
 		s.Flush()
 
 		time.Sleep(10 * time.Millisecond)
@@ -530,7 +530,7 @@ func TestSelect(t *testing.T) {
 			return 5, nil
 		})
 		s := newTestScope(t)
-		Resolve(s, atom)
+		_, _ = Resolve(s, atom)
 
 		handle := Select(s, atom, func(v int) int { return v })
 		var notified atomic.Int32
@@ -540,7 +540,7 @@ func TestSelect(t *testing.T) {
 		defer unsub()
 
 		ctrl := GetController(s, atom)
-		ctrl.Set(5)
+		_ = ctrl.Set(5)
 		s.Flush()
 
 		time.Sleep(10 * time.Millisecond)
@@ -553,7 +553,7 @@ func TestSelect(t *testing.T) {
 			return []int{1, 2, 3}, nil
 		})
 		s := newTestScope(t)
-		Resolve(s, atom)
+		_, _ = Resolve(s, atom)
 
 		handle := SelectWith(s, atom, func(v []int) int { return len(v) }, func(a, b int) bool { return a == b })
 
@@ -564,7 +564,7 @@ func TestSelect(t *testing.T) {
 		defer unsub()
 
 		ctrl := GetController(s, atom)
-		ctrl.Set([]int{4, 5, 6})
+		_ = ctrl.Set([]int{4, 5, 6})
 		s.Flush()
 		time.Sleep(10 * time.Millisecond)
 
@@ -579,7 +579,7 @@ func TestSelectLazySubscribe(t *testing.T) {
 		return 1, nil
 	})
 	s := newTestScope(t)
-	Resolve(s, atom)
+	_, _ = Resolve(s, atom)
 
 	handle := Select(s, atom, func(v int) int { return v })
 
@@ -602,7 +602,7 @@ func TestSelectAutoCleanupOnLastUnsubscribe(t *testing.T) {
 		return 1, nil
 	})
 	s := newTestScope(t)
-	Resolve(s, atom)
+	_, _ = Resolve(s, atom)
 
 	handle := Select(s, atom, func(v int) int { return v })
 	unsub := handle.Subscribe(func() {})
@@ -744,7 +744,7 @@ func TestExecContextParentChain(t *testing.T) {
 	defer parent.Close(nil)
 
 	var capturedParent *ExecContext
-	ExecFn(parent, func(child *ExecContext) (int, error) {
+	_, _ = ExecFn(parent, func(child *ExecContext) (int, error) {
 		capturedParent = child.Parent()
 		return 1, nil
 	})
@@ -854,7 +854,7 @@ func TestExecContextGating(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		s := NewScope(ctx)
-		s.Ready()
+		_ = s.Ready()
 
 		ec := s.CreateContext()
 		_, err := ExecFlow(ec, flow, "test")
@@ -878,7 +878,7 @@ func TestExecContextGating(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		s := NewScope(ctx)
-		s.Ready()
+		_ = s.Ready()
 		ec := s.CreateContext()
 
 		_, err := ExecFn(ec, func(ec *ExecContext) (int, error) {
@@ -1301,7 +1301,7 @@ func TestExtensionWrapResolve(t *testing.T) {
 	ext := &trackingExtension{}
 	atom := NewAtom(func(rc *ResolveContext) (int, error) { return 1, nil })
 	s := newTestScope(t, WithExtensions(ext))
-	Resolve(s, atom)
+	_, _ = Resolve(s, atom)
 
 	if ext.resolveCount.Load() < 1 {
 		t.Fatal("WrapResolve not called")
@@ -1313,7 +1313,7 @@ func TestExtensionWrapExec(t *testing.T) {
 	s := newTestScope(t, WithExtensions(ext))
 	ec := s.CreateContext()
 
-	ExecFn(ec, func(ec *ExecContext) (int, error) { return 1, nil })
+	_, _ = ExecFn(ec, func(ec *ExecContext) (int, error) { return 1, nil })
 	if ext.execCount.Load() < 1 {
 		t.Fatal("WrapExec not called")
 	}
@@ -1323,8 +1323,8 @@ func TestExtensionDispose(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		ext := &trackingExtension{}
 		s := NewScope(context.Background(), WithExtensions(ext))
-		s.Ready()
-		s.Dispose()
+		_ = s.Ready()
+		_ = s.Dispose()
 
 		if !ext.disposeCalled.Load() {
 			t.Fatal("dispose not called")
@@ -1333,10 +1333,10 @@ func TestExtensionDispose(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
 		ext := &slowDisposeExtension{}
 		s := NewScope(context.Background(), WithExtensions(ext))
-		s.Ready()
+		_ = s.Ready()
 
 		start := time.Now()
-		s.Dispose()
+		_ = s.Dispose()
 		elapsed := time.Since(start)
 
 		if elapsed > 6*time.Second {
@@ -1346,8 +1346,8 @@ func TestExtensionDispose(t *testing.T) {
 	t.Run("panic", func(t *testing.T) {
 		ext := &panicDisposeExtension{}
 		s := NewScope(context.Background(), WithExtensions(ext))
-		s.Ready()
-		s.Dispose()
+		_ = s.Ready()
+		_ = s.Dispose()
 	})
 }
 
@@ -1366,7 +1366,7 @@ func TestExtensionChain(t *testing.T) {
 
 	atom := NewAtom(func(rc *ResolveContext) (int, error) { return 1, nil })
 	s := newTestScope(t, WithExtensions(ext1, ext2))
-	Resolve(s, atom)
+	_, _ = Resolve(s, atom)
 
 	if len(order) != 2 || order[0] != "ext1" || order[1] != "ext2" {
 		t.Fatalf("expected [ext1 ext2], got %v", order)
@@ -1392,7 +1392,7 @@ func TestExtensionExecChain(t *testing.T) {
 	s := newTestScope(t, WithExtensions(ext1, ext2))
 	ec := s.CreateContext()
 
-	ExecFn(ec, func(ec *ExecContext) (int, error) { return 1, nil })
+	_, _ = ExecFn(ec, func(ec *ExecContext) (int, error) { return 1, nil })
 
 	if len(order) != 2 || order[0] != "ext1" || order[1] != "ext2" {
 		t.Fatalf("expected [ext1 ext2], got %v", order)
@@ -1450,7 +1450,7 @@ func TestGC(t *testing.T) {
 		})
 
 		s := newTestScope(t, WithGC(GCOptions{Enabled: true, GraceMs: 50}))
-		Resolve(s, atom)
+		_, _ = Resolve(s, atom)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -1469,7 +1469,7 @@ func TestGC(t *testing.T) {
 		}, WithKeepAlive())
 
 		s := newTestScope(t, WithGC(GCOptions{Enabled: true, GraceMs: 50}))
-		Resolve(s, atom)
+		_, _ = Resolve(s, atom)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -1517,7 +1517,7 @@ func TestGC(t *testing.T) {
 		})
 
 		s := newTestScope(t, WithGC(GCOptions{Enabled: true, GraceMs: 50}))
-		Resolve(s, parent)
+		_, _ = Resolve(s, parent)
 
 		time.Sleep(200 * time.Millisecond)
 		if cleanedUp.Load() {
@@ -1535,7 +1535,7 @@ func TestGC(t *testing.T) {
 		})
 
 		s := newTestScope(t, WithGC(GCOptions{Enabled: false}))
-		Resolve(s, atom)
+		_, _ = Resolve(s, atom)
 
 		time.Sleep(200 * time.Millisecond)
 
@@ -1598,8 +1598,8 @@ func TestCleanupLIFO(t *testing.T) {
 		return 1, nil
 	})
 	s := newTestScope(t)
-	Resolve(s, atom)
-	Release(s, atom)
+	_, _ = Resolve(s, atom)
+	_ = Release(s, atom)
 
 	if len(order) != 3 || order[0] != 3 || order[1] != 2 || order[2] != 1 {
 		t.Fatalf("expected LIFO [3,2,1], got %v", order)
@@ -1619,8 +1619,8 @@ func TestCleanupPanicContainment(t *testing.T) {
 		return 1, nil
 	})
 	s := newTestScope(t)
-	Resolve(s, atom)
-	Release(s, atom)
+	_, _ = Resolve(s, atom)
+	_ = Release(s, atom)
 
 	if !secondRan.Load() {
 		t.Fatal("second cleanup should run despite panic in first")
@@ -1639,9 +1639,9 @@ func TestScopeDispose(t *testing.T) {
 		})
 
 		s := NewScope(context.Background())
-		s.Ready()
-		Resolve(s, atom)
-		s.Dispose()
+		_ = s.Ready()
+		_, _ = Resolve(s, atom)
+		_ = s.Dispose()
 
 		if !cleanedUp.Load() {
 			t.Fatal("dispose should run cleanups")
@@ -1649,7 +1649,7 @@ func TestScopeDispose(t *testing.T) {
 	})
 	t.Run("idempotent", func(t *testing.T) {
 		s := NewScope(context.Background())
-		s.Ready()
+		_ = s.Ready()
 
 		err1 := s.Dispose()
 		err2 := s.Dispose()
@@ -1666,8 +1666,8 @@ func TestScopeDispose(t *testing.T) {
 			return 1, nil
 		})
 		s := NewScope(context.Background())
-		s.Ready()
-		s.Dispose()
+		_ = s.Ready()
+		_ = s.Dispose()
 
 		_, err := Resolve(s, atom)
 		if err == nil {
@@ -1679,7 +1679,7 @@ func TestScopeDispose(t *testing.T) {
 func TestContextCancellationPropagation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := NewScope(ctx)
-	s.Ready()
+	_ = s.Ready()
 	ec := s.CreateContext()
 
 	cancel()
@@ -1747,7 +1747,7 @@ func TestDependentsCascadeInvalidation(t *testing.T) {
 	})
 
 	s := newTestScope(t)
-	Resolve(s, parent)
+	_, _ = Resolve(s, parent)
 
 	childCtrl := GetController(s, child)
 	childCtrl.Invalidate()
@@ -1770,8 +1770,8 @@ func TestRelease(t *testing.T) {
 		return 1, nil
 	})
 	s := newTestScope(t)
-	Resolve(s, atom)
-	Release(s, atom)
+	_, _ = Resolve(s, atom)
+	_ = Release(s, atom)
 
 	if !cleanedUp.Load() {
 		t.Fatal("release should run cleanups")
@@ -1818,7 +1818,7 @@ func TestScopeOnStateListener(t *testing.T) {
 	})
 	defer unsub()
 
-	Resolve(s, atom)
+	_, _ = Resolve(s, atom)
 	if resolvedCount.Load() < 1 {
 		t.Fatal("expected resolved state notification")
 	}
@@ -1836,7 +1836,7 @@ func TestScopeOnStateUnsubscribe(t *testing.T) {
 	})
 	unsub()
 
-	Resolve(s, atom)
+	_, _ = Resolve(s, atom)
 	time.Sleep(10 * time.Millisecond)
 }
 
@@ -2106,7 +2106,7 @@ func TestResolveContextScope(t *testing.T) {
 		return 1, nil
 	})
 	s := newTestScope(t)
-	Resolve(s, atom)
+	_, _ = Resolve(s, atom)
 
 	if capturedScope == nil {
 		t.Fatal("scope should not be nil")
@@ -2140,7 +2140,7 @@ func TestResolveContextInvalidate(t *testing.T) {
 		return v, nil
 	})
 	s := newTestScope(t)
-	Resolve(s, atom)
+	_, _ = Resolve(s, atom)
 	time.Sleep(50 * time.Millisecond)
 	s.Flush()
 }
@@ -2153,7 +2153,7 @@ func TestResolveFromTracksDependents(t *testing.T) {
 	})
 
 	s := newTestScope(t)
-	Resolve(s, parent)
+	_, _ = Resolve(s, parent)
 
 	si := s.(*scopeImpl)
 	si.mu.RLock()
@@ -2183,11 +2183,11 @@ func TestPendingSetDuringResolving(t *testing.T) {
 	ctrl := GetController(s, atom)
 
 	go func() {
-		Resolve(s, atom)
+		_, _ = Resolve(s, atom)
 	}()
 
 	<-resolving
-	ctrl.Set(42)
+	_ = ctrl.Set(42)
 	close(proceed)
 
 	s.Flush()
@@ -2217,7 +2217,7 @@ func TestPendingInvalidateDuringResolving(t *testing.T) {
 	ctrl := GetController(s, atom)
 
 	go func() {
-		Resolve(s, atom)
+		_, _ = Resolve(s, atom)
 	}()
 
 	<-resolving
@@ -2240,7 +2240,7 @@ func TestUpdateFunctionPanicContainment(t *testing.T) {
 	s := newTestScope(t)
 	ctrl, _ := GetControllerResolved(s, atom)
 
-	ctrl.Update(func(prev int) int {
+	_ = ctrl.Update(func(prev int) int {
 		panic("update panic")
 	})
 	s.Flush()
@@ -2254,7 +2254,7 @@ func TestUpdateFunctionPanicContainment(t *testing.T) {
 func TestReadyErrBlocksUntilReady(t *testing.T) {
 	ext := &slowInitExtension{delay: 50 * time.Millisecond}
 	s := NewScope(context.Background(), WithExtensions(ext))
-	t.Cleanup(func() { s.Dispose() })
+	t.Cleanup(func() { _ = s.Dispose() })
 
 	start := time.Now()
 	err := s.ReadyErr()

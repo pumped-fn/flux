@@ -98,7 +98,7 @@ func (si *scopeImpl) executeGC(atom AnyAtom) {
 	}
 	entry.mu.Unlock()
 
-	si.releaseByID(atom.atomID())
+	_ = si.releaseByID(atom.atomID())
 }
 
 func activeListenerCount(entry *atomEntry) int {

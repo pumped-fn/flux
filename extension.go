@@ -74,10 +74,10 @@ func (si *scopeImpl) disposeExtensions() {
 			done := make(chan struct{}, 1)
 			go func() {
 				defer func() {
-					recover()
+					_ = recover()
 					close(done)
 				}()
-				d.Dispose(si)
+				_ = d.Dispose(si)
 			}()
 			select {
 			case <-time.After(5 * time.Second):
