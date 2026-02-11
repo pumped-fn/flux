@@ -1,0 +1,96 @@
+name: Flux CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.25', '1.26']
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+        cache-dependency-path: go.sum
+
+    - name: Verify dependencies
+      run: |
+        go mod download
+        go mod verify
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Run tests
+      run: CGO_ENABLED=1 go test -v -race -count=3 -timeout 120s -coverprofile=coverage.txt -covermode=atomic ./...
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v4
+      if: matrix.go-version == '1.26'
+      with:
+        file: coverage.txt
+        flags: flux
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26'
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        args: --timeout=5m
+
+  example:
+    name: Build Example
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26'
+
+    - name: Build task-manager
+      run: cd examples/task-manager && go build .
+
+  release:
+    name: Release
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Create release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release create ${{ github.ref_name }} --generate-notes
