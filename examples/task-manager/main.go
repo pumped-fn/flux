@@ -79,9 +79,9 @@ func cmdRun() int {
 		fmt.Fprintf(os.Stderr, "scope init failed: %v\n", err)
 		return 1
 	}
-	defer scope.Dispose()
+	defer func() { _ = scope.Dispose() }()
 
-	db := resolveDB(scope)
+	db := flux.MustResolve(scope, db)
 	if err := seedDB(db); err != nil {
 		fmt.Fprintf(os.Stderr, "seed failed: %v\n", err)
 		return 1
@@ -96,15 +96,9 @@ func cmdRun() int {
 
 	printDependencyGraph(os.Stdout)
 
-	reqLogger := baseLog.With("request_id", "demo")
-
 	fmt.Println("\n=== Create Task ===")
-	ec := scope.CreateContext(flux.WithContextTags(
-		requestIDTag.Value("demo-create"),
-		dbTxTag.Value(db),
-		reqLoggerTag.Value(reqLogger),
-	))
-	task, err := flux.ExecFlow(ec, createTaskFlow, CreateTaskInput{
+	ec := scope.CreateContext()
+	task, err := flux.ExecFlow(ec, createTask, CreateTaskInput{
 		Title:       "Demo task from CLI",
 		Description: "Created by flux-example run command",
 		Priority:    TaskPriorityHigh,
@@ -114,16 +108,12 @@ func cmdRun() int {
 		fmt.Fprintf(os.Stderr, "create failed: %v\n", err)
 		return 1
 	}
-	flux.GetController(scope, taskStatsAtom).Invalidate()
+	flux.GetController(scope, taskStats).Invalidate()
 	fmt.Printf("  Created: #%d %q [%s/%s]\n", task.ID, task.Title, task.Status, task.Priority)
 
 	fmt.Println("\n=== List Tasks ===")
-	ec = scope.CreateContext(flux.WithContextTags(
-		requestIDTag.Value("demo-list"),
-		dbTxTag.Value(db),
-		reqLoggerTag.Value(reqLogger),
-	))
-	tasks, err := flux.ExecFlow(ec, listTasksFlow, ListFilter{})
+	ec = scope.CreateContext()
+	tasks, err := flux.ExecFlow(ec, listTasks, ListFilter{})
 	ec.Close(err)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "list failed: %v\n", err)
@@ -135,12 +125,8 @@ func cmdRun() int {
 
 	fmt.Println("\n=== Update Task ===")
 	done := TaskStatusDone
-	ec = scope.CreateContext(flux.WithContextTags(
-		requestIDTag.Value("demo-update"),
-		dbTxTag.Value(db),
-		reqLoggerTag.Value(reqLogger),
-	))
-	updated, err := flux.ExecFlow(ec, updateTaskFlow, UpdateTaskRequest{
+	ec = scope.CreateContext()
+	updated, err := flux.ExecFlow(ec, updateTask, UpdateTaskRequest{
 		ID:    task.ID,
 		Input: UpdateTaskInput{Status: &done},
 	})
@@ -149,29 +135,25 @@ func cmdRun() int {
 		fmt.Fprintf(os.Stderr, "update failed: %v\n", err)
 		return 1
 	}
-	flux.GetController(scope, taskStatsAtom).Invalidate()
+	flux.GetController(scope, taskStats).Invalidate()
 	fmt.Printf("  Updated: #%d %q [%s/%s]\n", updated.ID, updated.Title, updated.Status, updated.Priority)
 
 	fmt.Println("\n=== Delete Task ===")
-	ec = scope.CreateContext(flux.WithContextTags(
-		requestIDTag.Value("demo-delete"),
-		dbTxTag.Value(db),
-		reqLoggerTag.Value(reqLogger),
-	))
-	deleted, err := flux.ExecFlow(ec, deleteTaskFlow, task.ID)
+	ec = scope.CreateContext()
+	deleted, err := flux.ExecFlow(ec, deleteTask, task.ID)
 	ec.Close(err)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "delete failed: %v\n", err)
 		return 1
 	}
-	flux.GetController(scope, taskStatsAtom).Invalidate()
+	flux.GetController(scope, taskStats).Invalidate()
 	fmt.Printf("  Deleted: #%d → %v\n", task.ID, deleted)
 
 	fmt.Println("\n=== Stats ===")
 	if err := scope.Flush(); err != nil {
 		fmt.Fprintf(os.Stderr, "flush failed: %v\n", err)
 	}
-	stats, err := flux.Resolve(scope, taskStatsAtom)
+	stats, err := flux.Resolve(scope, taskStats)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "stats failed: %v\n", err)
 		return 1
@@ -198,7 +180,7 @@ func cmdServe(addr string) int {
 	unsubStats, err := setupStats(scope, baseLog)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "stats setup failed: %v\n", err)
-		scope.Dispose()
+		_ = scope.Dispose()
 		return 1
 	}
 
@@ -209,7 +191,7 @@ func cmdServe(addr string) int {
 
 	go func() {
 		<-ctx.Done()
-		srv.Shutdown(context.Background())
+		_ = srv.Shutdown(context.Background())
 	}()
 
 	fmt.Printf("listening on %s\n", addr)
@@ -218,12 +200,12 @@ func cmdServe(addr string) int {
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		unsubStats()
-		scope.Dispose()
+		_ = scope.Dispose()
 		return 1
 	}
 
 	unsubStats()
-	scope.Dispose()
+	_ = scope.Dispose()
 	return 0
 }
 
@@ -234,10 +216,10 @@ type graphNode struct {
 }
 
 func buildGraph() []graphNode {
-	atoms := []flux.AnyAtom{dbAtom, loggerAtom, taskStatsAtom}
+	atoms := []flux.AnyAtom{db, logger, taskStats}
 	flows := []flux.AnyFlow{
-		createTaskFlow, listTasksFlow, getTaskFlow,
-		updateTaskFlow, deleteTaskFlow,
+		createTask, listTasks, getTask,
+		updateTask, deleteTask,
 	}
 
 	var nodes []graphNode
@@ -255,6 +237,7 @@ func buildGraph() []graphNode {
 		for i, d := range deps {
 			names[i] = d.Name()
 		}
+		// Resources appear as static deps alongside atoms in the dependency graph
 		nodes = append(nodes, graphNode{kind: "flow", name: f.Name(), deps: names})
 	}
 	return nodes

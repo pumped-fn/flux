@@ -6,7 +6,7 @@ type flowBase struct {
 	id    uint64
 	name  string
 	tags  []AnyTagged
-	deps  []AnyAtom
+	deps  []Resolvable
 	parse func(any) (any, error)
 }
 
@@ -16,7 +16,7 @@ func (f *flowBase) flowTags() []AnyTagged             { return f.tags }
 func (f *flowBase) flowParse() func(any) (any, error) { return f.parse }
 func (f *flowBase) Name() string                      { return f.name }
 func (f *flowBase) ID() uint64                        { return f.id }
-func (f *flowBase) Deps() []AnyAtom                   { return f.deps }
+func (f *flowBase) Deps() []Resolvable                { return f.deps }
 
 type Flow[In, Out any] struct {
 	flowBase
@@ -71,14 +71,18 @@ func NewFlow[In, Out any](factory func(*ExecContext, In) (Out, error), opts ...F
 	return f
 }
 
-func NewFlowFrom[D1, In, Out any](dep1 *Atom[D1], factory func(*ExecContext, In, D1) (Out, error), opts ...FlowOption) *Flow[In, Out] {
+// NewFlowFrom creates a Flow with one dependency (Atom or Resource).
+func NewFlowFrom[D1, In, Out any](dep1 FlowDep[D1], factory func(*ExecContext, In, D1) (Out, error), opts ...FlowOption) *Flow[In, Out] {
+	if dep1 == nil {
+		panic("flux: NewFlowFrom: dep1 must not be nil")
+	}
 	f := &Flow[In, Out]{
 		flowBase: flowBase{
 			id:   globalIDCounter.Add(1),
-			deps: []AnyAtom{dep1},
+			deps: []Resolvable{dep1},
 		},
 		factory: func(ec *ExecContext, input In) (Out, error) {
-			v1, err := resolveFlowDep(ec, dep1)
+			v1, err := dep1.resolveForFlow(ec)
 			if err != nil {
 				var zero Out
 				return zero, err
@@ -92,24 +96,72 @@ func NewFlowFrom[D1, In, Out any](dep1 *Atom[D1], factory func(*ExecContext, In,
 	return f
 }
 
-func NewFlowFrom2[D1, D2, In, Out any](dep1 *Atom[D1], dep2 *Atom[D2], factory func(*ExecContext, In, D1, D2) (Out, error), opts ...FlowOption) *Flow[In, Out] {
+// NewFlowFrom2 creates a Flow with two dependencies (Atom or Resource).
+func NewFlowFrom2[D1, D2, In, Out any](dep1 FlowDep[D1], dep2 FlowDep[D2], factory func(*ExecContext, In, D1, D2) (Out, error), opts ...FlowOption) *Flow[In, Out] {
+	if dep1 == nil {
+		panic("flux: NewFlowFrom2: dep1 must not be nil")
+	}
+	if dep2 == nil {
+		panic("flux: NewFlowFrom2: dep2 must not be nil")
+	}
 	f := &Flow[In, Out]{
 		flowBase: flowBase{
 			id:   globalIDCounter.Add(1),
-			deps: []AnyAtom{dep1, dep2},
+			deps: []Resolvable{dep1, dep2},
 		},
 		factory: func(ec *ExecContext, input In) (Out, error) {
-			v1, err := resolveFlowDep(ec, dep1)
+			v1, err := dep1.resolveForFlow(ec)
 			if err != nil {
 				var zero Out
 				return zero, err
 			}
-			v2, err := resolveFlowDep(ec, dep2)
+			v2, err := dep2.resolveForFlow(ec)
 			if err != nil {
 				var zero Out
 				return zero, err
 			}
 			return factory(ec, input, v1, v2)
+		},
+	}
+	for _, opt := range opts {
+		opt(&f.flowBase)
+	}
+	return f
+}
+
+// NewFlowFrom3 creates a Flow with three dependencies (Atom or Resource).
+func NewFlowFrom3[D1, D2, D3, In, Out any](dep1 FlowDep[D1], dep2 FlowDep[D2], dep3 FlowDep[D3], factory func(*ExecContext, In, D1, D2, D3) (Out, error), opts ...FlowOption) *Flow[In, Out] {
+	if dep1 == nil {
+		panic("flux: NewFlowFrom3: dep1 must not be nil")
+	}
+	if dep2 == nil {
+		panic("flux: NewFlowFrom3: dep2 must not be nil")
+	}
+	if dep3 == nil {
+		panic("flux: NewFlowFrom3: dep3 must not be nil")
+	}
+	f := &Flow[In, Out]{
+		flowBase: flowBase{
+			id:   globalIDCounter.Add(1),
+			deps: []Resolvable{dep1, dep2, dep3},
+		},
+		factory: func(ec *ExecContext, input In) (Out, error) {
+			v1, err := dep1.resolveForFlow(ec)
+			if err != nil {
+				var zero Out
+				return zero, err
+			}
+			v2, err := dep2.resolveForFlow(ec)
+			if err != nil {
+				var zero Out
+				return zero, err
+			}
+			v3, err := dep3.resolveForFlow(ec)
+			if err != nil {
+				var zero Out
+				return zero, err
+			}
+			return factory(ec, input, v1, v2, v3)
 		},
 	}
 	for _, opt := range opts {

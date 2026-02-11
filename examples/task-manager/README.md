@@ -1,6 +1,6 @@
 # Task Manager Example
 
-A SQLite-backed task management API that demonstrates all flux primitives: atoms, flows, tags, controllers, select, and extensions.
+A SQLite-backed task management API that demonstrates all flux primitives: tags, atoms, resources, flows, controllers, select, and extensions.
 
 ## Usage
 
@@ -42,58 +42,53 @@ Starts an HTTP server on the given address.
 
 ```mermaid
 graph TD
-    Scope[Scope]
+    subgraph Tags
+        DBPath[db-path tag]
+        LogLevel[log-level tag]
+    end
 
     subgraph Atoms
-        DB[db atom]
-        Logger[logger atom]
-        Stats[stats atom]
+        DB[db]
+        Logger[logger]
+        Stats[task-stats]
+    end
+
+    subgraph Resources
+        DBTX[db-tx]
+        ReqID[request-id]
+        ReqLogger[req-logger]
     end
 
     subgraph Flows
-        Create[create task flow]
-        List[list tasks flow]
-        Get[get task flow]
-        Update[update task flow]
-        Delete[delete task flow]
-    end
-
-    subgraph Tags
-        AmbientTx[ambient tx tag]
-        LoggerTag[logger tag]
+        Create[create-task]
+        List[list-tasks]
+        Get[get-task]
+        Update[update-task]
+        Delete[delete-task]
     end
 
     subgraph Extensions
-        Timing[timing extension]
+        Timing[request-timing]
     end
 
-    Scope --> DB
-    Scope --> Logger
-    Scope --> Stats
-    Scope --> Timing
+    DBPath --> DB
+    LogLevel --> Logger
+    DB --> Stats
+    DB --> DBTX
+    ReqID --> ReqLogger
+    Logger --> ReqLogger
 
-    DB --> Create
-    DB --> List
-    DB --> Get
-    DB --> Update
-    DB --> Delete
+    DBTX --> Create
+    DBTX --> List
+    DBTX --> Get
+    DBTX --> Update
+    DBTX --> Delete
 
-    Logger --> LoggerTag
-    AmbientTx --> Create
-    AmbientTx --> Update
-    AmbientTx --> Delete
-    LoggerTag --> Create
-    LoggerTag --> List
-    LoggerTag --> Get
-    LoggerTag --> Update
-    LoggerTag --> Delete
+    ReqLogger --> Create
+    ReqLogger --> List
+    ReqLogger --> Get
+    ReqLogger --> Update
+    ReqLogger --> Delete
 
-    Stats --> List
-    Stats --> Get
-
-    Timing --> Create
-    Timing --> List
-    Timing --> Get
-    Timing --> Update
-    Timing --> Delete
+    Get -.-> Update
 ```

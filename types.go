@@ -60,6 +60,13 @@ type AnyTagged interface {
 	TagValue() any
 }
 
+// Resolvable is anything that can appear as a named dependency.
+// Both *Atom[T] and *Resource[T] implement this interface.
+type Resolvable interface {
+	Name() string
+	ID() uint64
+}
+
 type Scope interface {
 	Ready() error
 	ReadyErr() error
@@ -77,7 +84,7 @@ type AnyAtom interface {
 	atomTags() []AnyTagged
 	Name() string
 	ID() uint64
-	Deps() []AnyAtom
+	Deps() []Resolvable
 }
 
 type AnyFlow interface {
@@ -88,7 +95,7 @@ type AnyFlow interface {
 	callFactory(ec *ExecContext, input any) (any, error)
 	Name() string
 	ID() uint64
-	Deps() []AnyAtom
+	Deps() []Resolvable
 }
 
 type AnyExecTarget interface {

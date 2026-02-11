@@ -238,98 +238,92 @@ func TestExampleOrderProcessing(t *testing.T) {
 		return &atomic.Int64{}, nil
 	}, WithAtomName("user-query-counter"))
 
-	getUser := NewFlow(func(ec *ExecContext, userID int) (*User, error) {
-		cache := MustResolve[*Cache](ec.Scope(), cacheAtom)
-		cacheKey := fmt.Sprintf("user:%d", userID)
-		if cached, ok := cache.Get(cacheKey); ok {
-			return cached.(*User), nil
-		}
-
+	// Resource: acquire a DB connection from the pool, auto-cleanup on close.
+	// Defined once, used by all flows — no more manual pool.Acquire/OnClose boilerplate.
+	dbConnResource := NewResource("db-conn", func(ec *ExecContext) (*DBConn, error) {
 		pool := MustResolve[*DBPool](ec.Scope(), dbAtom)
 		conn, err := pool.Acquire()
 		if err != nil {
-			return nil, fmt.Errorf("acquire connection: %w", err)
+			return nil, err
 		}
 		ec.OnClose(func(error) error { return conn.Close() })
+		return conn, nil
+	})
 
-		counter := MustResolve[*atomic.Int64](ec.Scope(), userCounterAtom)
-		counter.Add(1)
+	getUser := NewFlowFrom(dbConnResource,
+		func(ec *ExecContext, userID int, conn *DBConn) (*User, error) {
+			cache := MustResolve[*Cache](ec.Scope(), cacheAtom)
+			cacheKey := fmt.Sprintf("user:%d", userID)
+			if cached, ok := cache.Get(cacheKey); ok {
+				return cached.(*User), nil
+			}
 
-		rows, err := conn.Query("SELECT * FROM users WHERE id = ?", userID)
-		if err != nil {
-			return nil, fmt.Errorf("query user: %w", err)
-		}
-		if len(rows) == 0 {
-			return nil, fmt.Errorf("user %d not found", userID)
-		}
+			counter := MustResolve[*atomic.Int64](ec.Scope(), userCounterAtom)
+			counter.Add(1)
 
-		user := &User{
-			ID:    rows[0]["id"].(int),
-			Name:  rows[0]["name"].(string),
-			Email: fmt.Sprintf("%s@example.com", rows[0]["name"]),
-		}
-		cache.Set(cacheKey, user)
-		return user, nil
-	}, WithFlowName("get-user"))
+			rows, err := conn.Query("SELECT * FROM users WHERE id = ?", userID)
+			if err != nil {
+				return nil, fmt.Errorf("query user: %w", err)
+			}
+			if len(rows) == 0 {
+				return nil, fmt.Errorf("user %d not found", userID)
+			}
 
-	processPayment := NewFlow(func(ec *ExecContext, req PaymentRequest) (*PaymentResult, error) {
-		pool := MustResolve[*DBPool](ec.Scope(), dbAtom)
-		conn, err := pool.Acquire()
-		if err != nil {
-			return nil, fmt.Errorf("acquire connection: %w", err)
-		}
-		ec.OnClose(func(error) error { return conn.Close() })
+			user := &User{
+				ID:    rows[0]["id"].(int),
+				Name:  rows[0]["name"].(string),
+				Email: fmt.Sprintf("%s@example.com", rows[0]["name"]),
+			}
+			cache.Set(cacheKey, user)
+			return user, nil
+		}, WithFlowName("get-user"))
 
-		if err := conn.Exec("INSERT INTO payments (order_id, amount) VALUES (?, ?)", req.OrderID, req.Amount); err != nil {
-			return nil, fmt.Errorf("insert payment: %w", err)
-		}
+	processPayment := NewFlowFrom(dbConnResource,
+		func(ec *ExecContext, req PaymentRequest, conn *DBConn) (*PaymentResult, error) {
+			if err := conn.Exec("INSERT INTO payments (order_id, amount) VALUES (?, ?)", req.OrderID, req.Amount); err != nil {
+				return nil, fmt.Errorf("insert payment: %w", err)
+			}
 
-		return &PaymentResult{
-			TransactionID: fmt.Sprintf("txn_%s", req.OrderID),
-			Status:        "completed",
-		}, nil
-	}, WithFlowName("process-payment"))
+			return &PaymentResult{
+				TransactionID: fmt.Sprintf("txn_%s", req.OrderID),
+				Status:        "completed",
+			}, nil
+		}, WithFlowName("process-payment"))
 
-	createOrder := NewFlow(func(ec *ExecContext, req OrderRequest) (*Order, error) {
-		user, err := ExecFlow(ec, getUser, req.UserID, WithExecName("get-user-for-order"))
-		if err != nil {
-			return nil, fmt.Errorf("get user: %w", err)
-		}
-		_ = user
+	createOrder := NewFlowFrom(dbConnResource,
+		func(ec *ExecContext, req OrderRequest, conn *DBConn) (*Order, error) {
+			user, err := ExecFlow(ec, getUser, req.UserID, WithExecName("get-user-for-order"))
+			if err != nil {
+				return nil, fmt.Errorf("get user: %w", err)
+			}
+			_ = user
 
-		pool := MustResolve[*DBPool](ec.Scope(), dbAtom)
-		conn, err := pool.Acquire()
-		if err != nil {
-			return nil, fmt.Errorf("acquire connection: %w", err)
-		}
-		ec.OnClose(func(error) error { return conn.Close() })
+			order := &Order{
+				ID:        fmt.Sprintf("ord_%d_%s", req.UserID, req.ProductID),
+				UserID:    req.UserID,
+				ProductID: req.ProductID,
+				Quantity:  req.Quantity,
+				Total:     float64(req.Quantity) * 29.99,
+				Status:    "pending",
+			}
 
-		order := &Order{
-			ID:        fmt.Sprintf("ord_%d_%s", req.UserID, req.ProductID),
-			UserID:    req.UserID,
-			ProductID: req.ProductID,
-			Quantity:  req.Quantity,
-			Total:     float64(req.Quantity) * 29.99,
-			Status:    "pending",
-		}
+			if err := conn.Exec("INSERT INTO orders (id, user_id) VALUES (?, ?)", order.ID, order.UserID); err != nil {
+				return nil, fmt.Errorf("insert order: %w", err)
+			}
 
-		if err := conn.Exec("INSERT INTO orders (id, user_id) VALUES (?, ?)", order.ID, order.UserID); err != nil {
-			return nil, fmt.Errorf("insert order: %w", err)
-		}
+			payment, err := ExecFlow(ec, processPayment, PaymentRequest{
+				OrderID: order.ID,
+				Amount:  order.Total,
+				Method:  "card",
+			}, WithExecName("pay-for-order"))
+			if err != nil {
+				return nil, fmt.Errorf("payment: %w", err)
+			}
+			_ = payment
 
-		payment, err := ExecFlow(ec, processPayment, PaymentRequest{
-			OrderID: order.ID,
-			Amount:  order.Total,
-			Method:  "card",
-		}, WithExecName("pay-for-order"))
-		if err != nil {
-			return nil, fmt.Errorf("payment: %w", err)
-		}
-		_ = payment
-
-		order.Status = "confirmed"
-		return order, nil
-	}, WithFlowName("create-order"), WithFlowTags(requestIDTag.Value("test-flow")))
+			order.Status = "confirmed"
+			return order, nil
+		}, WithFlowName("create-order"), WithFlowTags(requestIDTag.Value("test-flow")))
 
 	scope := NewScope(context.Background(),
 		WithExtensions(&ObservabilityExtension{telemetry: telemetry}),
@@ -412,6 +406,21 @@ func TestExampleOrderProcessing(t *testing.T) {
 		t.Errorf("expected 1 user query, got %d", counter.Load())
 	}
 
+	// Verify resource cleanup: after ec.Close, connections from ec should be closed.
+	pool := MustResolve[*DBPool](scope, dbAtom)
+	pool.mu.Lock()
+	closedAfterFirst := 0
+	for _, c := range pool.conns {
+		if c.closed.Load() {
+			closedAfterFirst++
+		}
+	}
+	connsAfterFirst := len(pool.conns)
+	pool.mu.Unlock()
+	if closedAfterFirst == 0 {
+		t.Error("expected at least one connection closed after ec.Close — resource cleanup not working")
+	}
+
 	ec2 := scope.CreateContext()
 	order2, err := ExecFlow(ec2, createOrder, OrderRequest{
 		UserID:    42,
@@ -423,11 +432,37 @@ func TestExampleOrderProcessing(t *testing.T) {
 	}
 	ec2.Close(nil)
 
+	// Verify resource isolation: ec2 should have acquired new connections.
+	pool.mu.Lock()
+	connsAfterSecond := len(pool.conns)
+	pool.mu.Unlock()
+	if connsAfterSecond <= connsAfterFirst {
+		t.Errorf("expected new connections for ec2 (resource isolation), conns before=%d after=%d", connsAfterFirst, connsAfterSecond)
+	}
+
 	if counter.Load() != 1 {
 		t.Errorf("expected 1 user query (second was cache hit), got %d", counter.Load())
 	}
 	if order2.Status != "confirmed" {
 		t.Errorf("unexpected order2 status: %s", order2.Status)
+	}
+
+	// Verify dependency graph shows resources as static deps.
+	for _, f := range []*Flow[OrderRequest, *Order]{createOrder} {
+		deps := f.Deps()
+		if len(deps) == 0 {
+			t.Errorf("flow %q should declare resource deps in Deps()", f.Name())
+		}
+		found := false
+		for _, d := range deps {
+			if d.Name() == "db-conn" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("flow %q should have db-conn resource in Deps()", f.Name())
+		}
 	}
 
 	_ = scope.Dispose()

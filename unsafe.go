@@ -12,7 +12,7 @@ var (
 	errIface = reflect.TypeFor[error]()
 )
 
-func NewAtomUnsafe[T any](deps []AnyAtom, factory any, opts ...AtomOption) *Atom[T] {
+func NewAtomUnsafe[T any](deps []Resolvable, factory any, opts ...AtomOption) *Atom[T] {
 	fVal := reflect.ValueOf(factory)
 	fType := fVal.Type()
 	if fType.Kind() != reflect.Func {
@@ -33,16 +33,26 @@ func NewAtomUnsafe[T any](deps []AnyAtom, factory any, opts ...AtomOption) *Atom
 
 	depsCopy := slices.Clone(deps)
 
+	// Atom deps must be atoms — validate at construction time.
+	atomDeps := make([]AnyAtom, len(depsCopy))
+	for i, dep := range depsCopy {
+		atom, ok := dep.(AnyAtom)
+		if !ok {
+			panic(fmt.Sprintf("flux: NewAtomUnsafe: dep %d (%q) is not an Atom", i, dep.Name()))
+		}
+		atomDeps[i] = atom
+	}
+
 	a := &Atom[T]{
 		atomBase: atomBase{
 			id:   globalIDCounter.Add(1),
 			deps: depsCopy,
 		},
 		factory: func(rc *ResolveContext) (T, error) {
-			args := make([]reflect.Value, 1+len(depsCopy))
+			args := make([]reflect.Value, 1+len(atomDeps))
 			args[0] = reflect.ValueOf(rc)
-			for i, dep := range depsCopy {
-				val, err := ResolveAnyFrom(rc, dep)
+			for i, atom := range atomDeps {
+				val, err := ResolveAnyFrom(rc, atom)
 				if err != nil {
 					var zero T
 					return zero, err
@@ -71,7 +81,7 @@ func NewAtomUnsafe[T any](deps []AnyAtom, factory any, opts ...AtomOption) *Atom
 	return a
 }
 
-func NewFlowUnsafe[In, Out any](deps []AnyAtom, factory any, opts ...FlowOption) *Flow[In, Out] {
+func NewFlowUnsafe[In, Out any](deps []Resolvable, factory any, opts ...FlowOption) *Flow[In, Out] {
 	fVal := reflect.ValueOf(factory)
 	fType := fVal.Type()
 	if fType.Kind() != reflect.Func {
@@ -104,22 +114,13 @@ func NewFlowUnsafe[In, Out any](deps []AnyAtom, factory any, opts ...FlowOption)
 			for i, dep := range depsCopy {
 				var val any
 				var err error
-				type dataResolver interface {
-					resolveFromData(data *ContextData) (any, bool, error)
-				}
-				if dr, ok := dep.(dataResolver); ok {
-					v, found, tagErr := dr.resolveFromData(ec.Data())
-					if tagErr != nil {
-						var zero Out
-						return zero, tagErr
-					}
-					if found {
-						val = v
-					} else {
-						val, err = ResolveAny(ec.Scope(), dep)
-					}
+				if fr, ok := dep.(flowAnyDep); ok {
+					val, err = fr.resolveForFlowAny(ec)
+				} else if atom, ok := dep.(AnyAtom); ok {
+					val, err = ResolveAny(ec.Scope(), atom)
 				} else {
-					val, err = ResolveAny(ec.Scope(), dep)
+					var zero Out
+					return zero, fmt.Errorf("flux: NewFlowUnsafe: dep %d (%q) is not a supported dependency type", i, dep.Name())
 				}
 				if err != nil {
 					var zero Out

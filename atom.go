@@ -1,13 +1,11 @@
 package flux
 
-import "fmt"
-
 type atomBase struct {
 	id        uint64
 	name      string
 	keepAlive bool
 	tags      []AnyTagged
-	deps      []AnyAtom
+	deps      []Resolvable
 }
 
 func (a *atomBase) atomID() uint64        { return a.id }
@@ -16,7 +14,7 @@ func (a *atomBase) atomKeepAlive() bool   { return a.keepAlive }
 func (a *atomBase) atomTags() []AnyTagged { return a.tags }
 func (a *atomBase) Name() string          { return a.name }
 func (a *atomBase) ID() uint64            { return a.id }
-func (a *atomBase) Deps() []AnyAtom       { return a.deps }
+func (a *atomBase) Deps() []Resolvable    { return a.deps }
 
 type Atom[T any] struct {
 	atomBase
@@ -151,18 +149,14 @@ func WithAtomTags(tags ...AnyTagged) AtomOption {
 	return func(b *atomBase) { b.tags = tags }
 }
 
-func (a *Atom[T]) resolveFromData(data *ContextData) (any, bool, error) {
-	if a.tagSource == nil {
-		return nil, false, nil
-	}
-	v, ok := SeekTag(data, a.tagSource)
-	if ok {
-		return v, true, nil
-	}
-	if a.tagSource.hasDefault {
-		return a.tagSource.defaultVal, true, nil
-	}
-	return nil, false, fmt.Errorf("required tag %q not found in context", a.tagSource.Label())
+// resolveForFlow implements FlowDep[T] for Atom.
+func (a *Atom[T]) resolveForFlow(ec *ExecContext) (T, error) {
+	return resolveFlowDep(ec, a)
+}
+
+// resolveForFlowAny is the untyped version used by NewFlowUnsafe.
+func (a *Atom[T]) resolveForFlowAny(ec *ExecContext) (any, error) {
+	return resolveFlowDep(ec, a)
 }
 
 func resolveAtomDep[T any](rc *ResolveContext, dep *Atom[T]) (T, error) {
@@ -187,7 +181,7 @@ func NewAtomFrom[D1, T any](dep1 *Atom[D1], factory func(*ResolveContext, D1) (T
 	a := &Atom[T]{
 		atomBase: atomBase{
 			id:   globalIDCounter.Add(1),
-			deps: []AnyAtom{dep1},
+			deps: []Resolvable{dep1},
 		},
 		factory: func(rc *ResolveContext) (T, error) {
 			v1, err := resolveAtomDep(rc, dep1)
@@ -208,7 +202,7 @@ func NewAtomFrom2[D1, D2, T any](dep1 *Atom[D1], dep2 *Atom[D2], factory func(*R
 	a := &Atom[T]{
 		atomBase: atomBase{
 			id:   globalIDCounter.Add(1),
-			deps: []AnyAtom{dep1, dep2},
+			deps: []Resolvable{dep1, dep2},
 		},
 		factory: func(rc *ResolveContext) (T, error) {
 			v1, err := resolveAtomDep(rc, dep1)
@@ -234,7 +228,7 @@ func NewAtomFrom3[D1, D2, D3, T any](dep1 *Atom[D1], dep2 *Atom[D2], dep3 *Atom[
 	a := &Atom[T]{
 		atomBase: atomBase{
 			id:   globalIDCounter.Add(1),
-			deps: []AnyAtom{dep1, dep2, dep3},
+			deps: []Resolvable{dep1, dep2, dep3},
 		},
 		factory: func(rc *ResolveContext) (T, error) {
 			v1, err := resolveAtomDep(rc, dep1)

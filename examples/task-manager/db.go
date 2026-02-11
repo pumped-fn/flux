@@ -5,8 +5,45 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/pumped-fn/flux"
 	_ "modernc.org/sqlite"
 )
+
+var (
+	dbPathTag = flux.NewTagWithDefault("db-path", "tasks.db")
+	dbPathDep = flux.Required(dbPathTag)
+)
+
+var db = flux.NewAtomFrom(dbPathDep, func(rc *flux.ResolveContext, path string) (*sql.DB, error) {
+	db, err := openDB(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := migrateDB(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	rc.Cleanup(func() error { return db.Close() })
+	return db, nil
+}, flux.WithAtomName("db"), flux.WithKeepAlive())
+
+var dbtx = flux.NewResourceFrom(db, "db-tx", func(ec *flux.ExecContext, pool *sql.DB) (DBTX, error) {
+	// Use pool.Begin() (not BeginTx) because ExecContext.Close cancels the
+	// context before running OnClose callbacks. sql.Tx auto-rolls back on
+	// context cancellation, so BeginTx would conflict with our explicit
+	// commit/rollback in OnClose.
+	tx, err := pool.Begin()
+	if err != nil {
+		return nil, err
+	}
+	ec.OnClose(func(execErr error) error {
+		if execErr != nil {
+			return tx.Rollback()
+		}
+		return tx.Commit()
+	})
+	return tx, nil
+})
 
 type DBTX interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
@@ -15,23 +52,23 @@ type DBTX interface {
 }
 
 func openDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	d, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+	if _, err := d.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		d.Close()
 		return nil, err
 	}
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
+	if _, err := d.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		d.Close()
 		return nil, err
 	}
-	return db, nil
+	return d, nil
 }
 
-func migrateDB(db *sql.DB) error {
-	_, err := db.Exec(`
+func migrateDB(d *sql.DB) error {
+	_, err := d.Exec(`
 		CREATE TABLE IF NOT EXISTS tasks (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			title       TEXT NOT NULL,
@@ -45,9 +82,9 @@ func migrateDB(db *sql.DB) error {
 	return err
 }
 
-func seedDB(db *sql.DB) error {
+func seedDB(d *sql.DB) error {
 	var count int
-	if err := db.QueryRow("SELECT count(*) FROM tasks").Scan(&count); err != nil {
+	if err := d.QueryRow("SELECT count(*) FROM tasks").Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {
@@ -68,7 +105,7 @@ func seedDB(db *sql.DB) error {
 	}
 
 	for _, s := range seeds {
-		_, err := db.Exec(
+		_, err := d.Exec(
 			"INSERT INTO tasks (title, description, status, priority) VALUES (?, ?, ?, ?)",
 			s.title, s.desc, s.status, s.priority,
 		)
